@@ -1,0 +1,12 @@
+black
+pylint
+numpy
+pillow
+mss
+pygetwindow
+opencv-python
+matplotlib
+pandas
+stable-baselines3
+pywin32
+debugpy
