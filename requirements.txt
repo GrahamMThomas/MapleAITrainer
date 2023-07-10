@@ -11,3 +11,5 @@ stable-baselines3
 pywin32
 debugpy
 pytesseract
+tensorboard
+playsound==1.2.2

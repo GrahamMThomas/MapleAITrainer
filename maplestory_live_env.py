@@ -10,8 +10,9 @@ import pytesseract
 import win32gui
 from gymnasium import Space, spaces
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
-
+from playsound import playsound
 from keyboard_helper import *
+from PIL import Image
 
 pytesseract.pytesseract.tesseract_cmd = (
     r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
@@ -24,12 +25,12 @@ class MaplestoryLiveEnv(gymnasium.Env):
     GAME_WINDOW_TITLE = "Kaizen v92"
     FRAMES_STACK_COUNT = 4
 
-    MOVEMENT_KEYS = ["left", "up", "right", "down", ""]
+    MOVEMENT_KEYS = ["left", "end", "right", "down", ""]
     ATTACK_KEYS = ["x", "s", ""]
     MISC_KEYS = ["c", "z", ""]
 
     EXP_GAINED_REWARD_MULTIPLIER = 1
-    HEALTH_LOST_REWARD_MULTIPLIER = 1
+    HEALTH_LOST_REWARD_MULTIPLIER = 0.5
 
     def __init__(self):
         super(MaplestoryLiveEnv, self).__init__()
@@ -44,7 +45,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
             shape=(
                 self.GAME_WINDOW_HEIGHT,
                 self.GAME_WINDOW_WIDTH,
-                3,  # color channels
+                4,  # color channels
             ),
             dtype=np.uint8,
         )
@@ -52,7 +53,9 @@ class MaplestoryLiveEnv(gymnasium.Env):
         self.window_id = win32gui.FindWindow(None, self.GAME_WINDOW_TITLE)
 
     def step(self, actions: np.ndarray) -> VecEnvStepReturn:
-        os.system("cls")
+        # os.system("cls")
+        print("\n\nSTEP ###############################################")
+
         # Wait for game window to be focused
         foreground_id = win32gui.GetForegroundWindow()
         while foreground_id != self.window_id:
@@ -81,6 +84,10 @@ class MaplestoryLiveEnv(gymnasium.Env):
 
         print("Pressed Keys: ", self.pressed_keys)
 
+        # Use a pot once every 20 steps
+        if self.np_random.random() < 0.045:
+            press("shift", 1)
+
         # Perform actions
         if actions[0] != 4 and self.MOVEMENT_KEYS[actions[0]] not in self.pressed_keys:
             key_to_press = self.MOVEMENT_KEYS[actions[0]]
@@ -101,19 +108,16 @@ class MaplestoryLiveEnv(gymnasium.Env):
 
         # Process Game Frame
         game_frame, raw_game_frame = self.get_game_frame()
-
-        # cv2.imshow("Screen Capture", game_frame)
-        # cv2.waitKey(100)
-
+        self.captcha_check(raw_game_frame)
         # Reward Calculation
         self.reward = self.get_current_reward(raw_game_frame)
         print("Reward: ", self.reward)
 
-        sleep(1)
+        sleep(self.np_random.random() + 0.25)
 
-        return game_frame, self.reward, self.done, {}
+        return game_frame, self.reward, self.done, False, {}
 
-    def reset(self, seed=0) -> np.ndarray:
+    def reset(self, seed=0, options={}) -> np.ndarray:
         self.game_window = gw.getWindowsWithTitle(self.GAME_WINDOW_TITLE)[0]
         self.window_location = {
             "top": self.game_window.top,
@@ -128,6 +132,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
 
         self.previous_health = 0
         self.previous_exp = 0
+
         self.get_current_reward(raw_game_frame)
 
         return obs, {}
@@ -176,8 +181,17 @@ class MaplestoryLiveEnv(gymnasium.Env):
         exp_gained = self.get_exp_gained(raw_game_frame)
         healthLost = self.get_health_lost(raw_game_frame)
 
+        if exp_gained > 100:
+            print("VOIDING EXP GAINED")
+            exp_gained = 0
+        if healthLost > 30:
+            print("VOIDING HEALTH LOST")
+            healthLost = 0
+
         print("Exp Gained: ", exp_gained)
         print("Health Lost: ", healthLost)
+        self.health_lost = healthLost
+        self.exp_gained = exp_gained
 
         return (exp_gained * self.EXP_GAINED_REWARD_MULTIPLIER) - (
             healthLost * self.HEALTH_LOST_REWARD_MULTIPLIER
@@ -192,13 +206,13 @@ class MaplestoryLiveEnv(gymnasium.Env):
         health_game_frame[:, :, 1] = 0
         health_game_frame[:, :, 2] = 0
 
-        cv2.imshow("Screen Capture", health_game_frame)
-        cv2.waitKey(100)
-
         health: str = pytesseract.image_to_string(health_game_frame)
         # Example Capture: 300/500
         print("HealthCapture: ", health)
         health = health.strip().split("/")[0]
+        health = health.replace("$", "5")
+        health = health.replace("§", "5")
+        health = health.replace("S", "5")
         try:
             health = int(health)
         except:
@@ -226,6 +240,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
         exp = exp.strip().split(" ")[0]
         # replace $ and S characters with 5
         exp = exp.replace("$", "5")
+        exp = exp.replace("§", "5")
         exp = exp.replace("S", "5")
         try:
             exp = int(exp)
@@ -237,3 +252,28 @@ class MaplestoryLiveEnv(gymnasium.Env):
         self.previous_exp = exp
 
         return exp_gained
+
+    def captcha_check(self, screen_grab):
+        maple_admin = cv2.imread("mob/maple_admin.png", 0)
+        im = Image.open("mob/maple_admin.png")
+        out = im.transpose(Image.FLIP_LEFT_RIGHT)
+        out.save("mob/mob_i.png")
+        maple_admin_i = cv2.imread("mob/mob_i.png", 0)
+
+        im = cv2.cvtColor(screen_grab, cv2.COLOR_BGR2GRAY)  # 2
+        marked = False
+        for template in [maple_admin, maple_admin_i]:
+            res = cv2.matchTemplate(im, template, cv2.TM_CCOEFF_NORMED)
+            loc = np.where(res >= 0.65)
+
+            w, h = template.shape[::-1]
+
+            for pt in zip(*loc[::-1]):
+                height = pt[1] + h
+                cv2.rectangle(screen_grab, pt, (pt[0] + w, height), (255, 255, 0), 2)
+                marked = True
+
+        if marked:
+            playsound("audio/beep_warning.mp3")
+            cv2.imshow("Captcha Check", screen_grab)
+            cv2.waitKey(100)
