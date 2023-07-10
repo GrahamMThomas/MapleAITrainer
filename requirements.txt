@@ -10,3 +10,4 @@ pandas
 stable-baselines3
 pywin32
 debugpy
+pytesseract

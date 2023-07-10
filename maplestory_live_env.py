@@ -1,15 +1,21 @@
 from time import sleep
-from gymnasium import Space, spaces
-import gymnasium
-import numpy as np
-from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvStepReturn
-import pygetwindow as gw
+import os
 import cv2
+import gymnasium
 import mss
-import win32gui
-import win32con
+import numpy as np
 import pyautogui  # Need this imported to fix bug
+import pygetwindow as gw
+import pytesseract
+import win32gui
+from gymnasium import Space, spaces
+from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
+
 from keyboard_helper import *
+
+pytesseract.pytesseract.tesseract_cmd = (
+    r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+)
 
 
 class MaplestoryLiveEnv(gymnasium.Env):
@@ -21,6 +27,9 @@ class MaplestoryLiveEnv(gymnasium.Env):
     MOVEMENT_KEYS = ["left", "up", "right", "down", ""]
     ATTACK_KEYS = ["x", "s", ""]
     MISC_KEYS = ["c", "z", ""]
+
+    EXP_GAINED_REWARD_MULTIPLIER = 1
+    HEALTH_LOST_REWARD_MULTIPLIER = 1
 
     def __init__(self):
         super(MaplestoryLiveEnv, self).__init__()
@@ -43,6 +52,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
         self.window_id = win32gui.FindWindow(None, self.GAME_WINDOW_TITLE)
 
     def step(self, actions: np.ndarray) -> VecEnvStepReturn:
+        os.system("cls")
         # Wait for game window to be focused
         foreground_id = win32gui.GetForegroundWindow()
         while foreground_id != self.window_id:
@@ -90,16 +100,16 @@ class MaplestoryLiveEnv(gymnasium.Env):
             self.pressed_keys.append(key_to_press)
 
         # Process Game Frame
-        game_frame = self.get_game_frame()
+        game_frame, raw_game_frame = self.get_game_frame()
 
-        cv2.imshow("Screen Capture", game_frame)
-        cv2.waitKey(100)
+        # cv2.imshow("Screen Capture", game_frame)
+        # cv2.waitKey(100)
 
         # Reward Calculation
-        self.total_reward += 1
-        self.reward = self.total_reward - self.prev_reward
-        self.prev_reward = self.total_reward
-        sleep(0.25)
+        self.reward = self.get_current_reward(raw_game_frame)
+        print("Reward: ", self.reward)
+
+        sleep(1)
 
         return game_frame, self.reward, self.done, {}
 
@@ -112,12 +122,15 @@ class MaplestoryLiveEnv(gymnasium.Env):
             "height": self.game_window.height,
         }
         self.done = False
-        self.total_reward = 0
-        self.prev_reward = 0
-        self.reward = 0
         self.pressed_keys = []
 
-        return self.get_game_frame(), {}
+        obs, raw_game_frame = self.get_game_frame()
+
+        self.previous_health = 0
+        self.previous_exp = 0
+        self.get_current_reward(raw_game_frame)
+
+        return obs, {}
 
     def render(self):
         pass
@@ -141,7 +154,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
             )
 
         # print(game_frame)
-        return np.array(game_frame)
+        return np.array(game_frame), sct_img
 
     def frame(self, grab):
         im = np.array(grab)
@@ -156,3 +169,71 @@ class MaplestoryLiveEnv(gymnasium.Env):
             print("Attack: ", self.ATTACK_KEYS[actions[1]])
         if actions[2] != 2:
             print("Misc: ", self.MISC_KEYS[actions[2]])
+
+    def get_current_reward(self, raw_game_frame) -> int:
+        raw_game_frame
+        # Crop
+        exp_gained = self.get_exp_gained(raw_game_frame)
+        healthLost = self.get_health_lost(raw_game_frame)
+
+        print("Exp Gained: ", exp_gained)
+        print("Health Lost: ", healthLost)
+
+        return (exp_gained * self.EXP_GAINED_REWARD_MULTIPLIER) - (
+            healthLost * self.HEALTH_LOST_REWARD_MULTIPLIER
+        )
+
+    def get_health_lost(self, raw_game_frame) -> int:
+        health_game_frame = raw_game_frame[948:968, 300:380]
+        # Posterize
+        health_game_frame[health_game_frame >= 128] = 255
+        health_game_frame[health_game_frame < 128] = 0
+        # Isolate Blue Channel to remove Parans
+        health_game_frame[:, :, 1] = 0
+        health_game_frame[:, :, 2] = 0
+
+        cv2.imshow("Screen Capture", health_game_frame)
+        cv2.waitKey(100)
+
+        health: str = pytesseract.image_to_string(health_game_frame)
+        # Example Capture: 300/500
+        print("HealthCapture: ", health)
+        health = health.strip().split("/")[0]
+        try:
+            health = int(health)
+        except:
+            return 0
+
+        print("Current Health:", health)
+        print("Previous Health:", self.previous_health)
+        health_lost = max((self.previous_health - health), 0)
+        self.previous_health = health
+
+        return health_lost
+
+    def get_exp_gained(self, raw_game_frame) -> int:
+        exp_game_frame = raw_game_frame[948:968, 582:700]
+        # Posterize
+        exp_game_frame[exp_game_frame >= 128] = 255
+        exp_game_frame[exp_game_frame < 128] = 0
+        # Isolate Blue Channel to remove Parans
+        exp_game_frame[:, :, 1] = 0
+        exp_game_frame[:, :, 2] = 0
+
+        exp: str = pytesseract.image_to_string(exp_game_frame)
+        # Example Capture: 1123 98.16%)
+        print("ExpCapture: ", exp)
+        exp = exp.strip().split(" ")[0]
+        # replace $ and S characters with 5
+        exp = exp.replace("$", "5")
+        exp = exp.replace("S", "5")
+        try:
+            exp = int(exp)
+        except:
+            return 0
+
+        print("Current Exp:", exp)
+        exp_gained = max((exp - self.previous_exp), 0)
+        self.previous_exp = exp
+
+        return exp_gained
