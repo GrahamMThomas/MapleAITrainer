@@ -13,3 +13,4 @@ debugpy
 pytesseract
 tensorboard
 playsound==1.2.2
+pyautogui

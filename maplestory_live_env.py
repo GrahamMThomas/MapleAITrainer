@@ -11,7 +11,7 @@ import win32gui
 from gymnasium import Space, spaces
 from stable_baselines3.common.vec_env.base_vec_env import VecEnvStepReturn
 from playsound import playsound
-from keyboard_helper import *
+from lib.keyboard_helper import *
 from PIL import Image
 
 pytesseract.pytesseract.tesseract_cmd = (
@@ -30,7 +30,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
     MISC_KEYS = ["c", "z", ""]
 
     EXP_GAINED_REWARD_MULTIPLIER = 1
-    HEALTH_LOST_REWARD_MULTIPLIER = 0.5
+    HEALTH_LOST_REWARD_MULTIPLIER = 15
 
     def __init__(self):
         super(MaplestoryLiveEnv, self).__init__()
@@ -85,9 +85,10 @@ class MaplestoryLiveEnv(gymnasium.Env):
         print("Pressed Keys: ", self.pressed_keys)
 
         # Use a pot once every 20 steps
-        if self.np_random.random() < 0.045:
-            press("shift", 1)
+        # if self.np_random.random() < 0.045:
+        #     press("shift", 1)
 
+        action_penalty = 0
         # Perform actions
         if actions[0] != 4 and self.MOVEMENT_KEYS[actions[0]] not in self.pressed_keys:
             key_to_press = self.MOVEMENT_KEYS[actions[0]]
@@ -97,6 +98,8 @@ class MaplestoryLiveEnv(gymnasium.Env):
 
         if actions[1] != 2:
             key_to_press = self.ATTACK_KEYS[actions[1]]
+            if actions[1] == 1:
+                action_penalty += 5
             print("Press: ", key_to_press)
             press(key_to_press, 1)
 
@@ -106,14 +109,18 @@ class MaplestoryLiveEnv(gymnasium.Env):
             key_down(key_to_press)
             self.pressed_keys.append(key_to_press)
 
+        sleep(0.75)
         # Process Game Frame
         game_frame, raw_game_frame = self.get_game_frame()
-        self.captcha_check(raw_game_frame)
-        # Reward Calculation
-        self.reward = self.get_current_reward(raw_game_frame)
-        print("Reward: ", self.reward)
+        while self.captcha_check(raw_game_frame):
+            print("Waiting for captcha check...")
+            sleep(3)
+            game_frame, raw_game_frame = self.get_game_frame()
 
-        sleep(self.np_random.random() + 0.25)
+
+        # Reward Calculation
+        self.reward = self.get_current_reward(raw_game_frame) - action_penalty
+        print("Reward: ", self.reward)
 
         return game_frame, self.reward, self.done, False, {}
 
@@ -198,7 +205,10 @@ class MaplestoryLiveEnv(gymnasium.Env):
         )
 
     def get_health_lost(self, raw_game_frame) -> int:
-        health_game_frame = raw_game_frame[948:968, 300:380]
+        w,h = 80, 15
+        x,y = 239, 760
+        health_game_frame = raw_game_frame[y:y+h, x:x+w].copy()
+
         # Posterize
         health_game_frame[health_game_frame >= 128] = 255
         health_game_frame[health_game_frame < 128] = 0
@@ -226,13 +236,22 @@ class MaplestoryLiveEnv(gymnasium.Env):
         return health_lost
 
     def get_exp_gained(self, raw_game_frame) -> int:
-        exp_game_frame = raw_game_frame[948:968, 582:700]
+        w,h = 90, 15
+        x,y = 467, 760
+        exp_game_frame = raw_game_frame[y:y+h, x:x+w].copy()
+
+        # cv2.imshow("Captcha Check", exp_game_frame)
+        # cv2.waitKey(50)
+        # sleep(5)
+
         # Posterize
         exp_game_frame[exp_game_frame >= 128] = 255
         exp_game_frame[exp_game_frame < 128] = 0
         # Isolate Blue Channel to remove Parans
         exp_game_frame[:, :, 1] = 0
         exp_game_frame[:, :, 2] = 0
+
+        print(exp_game_frame.shape)
 
         exp: str = pytesseract.image_to_string(exp_game_frame)
         # Example Capture: 1123 98.16%)
@@ -257,8 +276,8 @@ class MaplestoryLiveEnv(gymnasium.Env):
         maple_admin = cv2.imread("mob/maple_admin.png", 0)
         im = Image.open("mob/maple_admin.png")
         out = im.transpose(Image.FLIP_LEFT_RIGHT)
-        out.save("mob/mob_i.png")
-        maple_admin_i = cv2.imread("mob/mob_i.png", 0)
+        out.save("mob/maple_admin_i.png")
+        maple_admin_i = cv2.imread("mob/maple_admin_i.png", 0)
 
         im = cv2.cvtColor(screen_grab, cv2.COLOR_BGR2GRAY)  # 2
         marked = False
@@ -275,5 +294,7 @@ class MaplestoryLiveEnv(gymnasium.Env):
 
         if marked:
             playsound("audio/beep_warning.mp3")
-            cv2.imshow("Captcha Check", screen_grab)
-            cv2.waitKey(100)
+            # cv2.imshow("Captcha Check", screen_grab)
+            # cv2.waitKey(100)
+
+        return marked

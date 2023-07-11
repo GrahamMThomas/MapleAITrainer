@@ -30,13 +30,13 @@ def main():
             env,
             verbose=1,
             tensorboard_log=LOG_DIR,
-            learning_rate=0.0003,
-            gamma=0.85,
-            batch_size=32,
-            n_steps=64,
+            learning_rate=0.000005,
+            gamma=0.92,
+            batch_size=128,
+            n_steps=256,
         )
     model.set_env(env)
-    model.learn(total_timesteps=100000, callback=callback, reset_num_timesteps=False)
+    model.learn(total_timesteps=10000, callback=callback, reset_num_timesteps=False)
 
 
 if __name__ == "__main__":
