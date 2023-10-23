@@ -1,3 +1,4 @@
+"""All Credit for this model goes to: https://github.com/tanjeffreyz/auto-maple/tree/main"""
 """A module for simulating low-level keyboard and mouse key presses."""
 
 import ctypes
